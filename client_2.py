@@ -2,7 +2,7 @@ import os
 import socket
 
 
-IP = 172.20.10.2
+IP = "172.20.10.2"
 PORT = 4450
 ADDR = (IP,PORT)
 SIZE = 1024
