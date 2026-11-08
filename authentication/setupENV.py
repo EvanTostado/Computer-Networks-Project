@@ -1,5 +1,7 @@
 import bcrypt
 
+#this is used to generate the hash for the .env or database well use
+
 #test stuff
 password = "this_is_a_test".encode()
 hashed = bcrypt.hashpw(password, bcrypt.gensalt())
