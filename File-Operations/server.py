@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 import json
 import socket
@@ -7,7 +6,21 @@ import threading
 import shutil #Used for recursively deleting directories
 import serverAuth
 
-HOST = "10.13.206.60"  
+#setups the analytics logging for the server
+import analytics
+analytics.init_metrics_log()
+
+#keeps track of connection amount
+active_clients = 0
+active_clients_lock = threading.Lock()
+
+#returns the client count
+def get_active_client_count() -> int:
+    with active_clients_lock:
+        return active_clients
+
+
+HOST = "0.0.0.0"  
 PORT = 4450
 STORAGE_DIR = os.path.abspath("./server_storage")
 BUFFER_SIZE = 64 * 1024  #64 KB chunk size for efficient file transfer
@@ -52,6 +65,12 @@ def recv_json(conn: socket.socket) -> dict:
 def connect(conn: socket.socket, addr: tuple):
     print(f"Client connected from {addr[0]}:{addr[1]}")
     authenticated = False
+
+    #when someone connects add to the client counter
+    global active_clients
+    with active_clients_lock:
+        active_clients += 1
+    client_label = f"{addr[0]}:{addr[1]}"
 
     try:
         while True: #active listening for client cmds
@@ -109,15 +128,20 @@ def connect(conn: socket.socket, addr: tuple):
     except Exception as e:
         print(f"Client {addr[0]}:{addr[1]}: {e}")
     finally:
+        #when a connection is over decrement the client counter
+        with active_clients_lock:
+            active_clients -= 1
+
         conn.close()
         print(f"Client {addr[0]}:{addr[1]} left.")
 
 # Clients can upload files to the server. Server will prompt
 # client if file already exists and requires user input to be overwritten
 def upload(conn: socket.socket, req: dict):
-    start_time = time.time() 
+    perf_start = time.perf_counter() #changed to be a more reliable system clock
     filename = req.get("filename")
     filesize = req.get("filesize")
+    file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
     rel_path = req.get("path", "")
     overwrite = req.get("overwrite", False)
 
@@ -149,8 +173,18 @@ def upload(conn: socket.socket, req: dict):
                 f.write(chunk)
                 received += len(chunk)
         
-        elapsed = time.time() - start_time
+        elapsed = time.perf_counter() - perf_start
         rate = (received / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+
+        #save these upload metrics to the analytics log
+        analytics.record_metric(
+            client_id="Client",
+            operation="UPLOAD",
+            file_type=file_ext,
+            file_size_bytes=received,
+            elapsed_sec=elapsed,
+            concurrent_clients=get_active_client_count()
+        )
         
         send_json(conn, {
             "status": "SUCCESS",
@@ -163,9 +197,9 @@ def upload(conn: socket.socket, req: dict):
 # Clients can download files from the server. Server
 # will respond with error message if file does not exist
 def download(conn: socket.socket, req: dict):
-    start_time = time.time()
     filename = req.get("filename")
     rel_path = req.get("path", "")
+    file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
 
     filepath = os.path.abspath(os.path.join(STORAGE_DIR, rel_path, filename))
     if not filepath.startswith(STORAGE_DIR) or not os.path.exists(filepath):
@@ -187,14 +221,27 @@ def download(conn: socket.socket, req: dict):
         # Wait for client confirmation to begin streaming
         ack = recv_json(conn)
         if ack and ack.get("status") == "START":
+            perf_start = time.perf_counter() #record time here for analytics
+
             sent = 0
             with open(filepath, "rb") as f:
                 while chunk := f.read(BUFFER_SIZE):
                     conn.sendall(chunk)
                     sent += len(chunk)
 
-            elapsed = time.time() - start_time
+            elapsed = time.perf_counter() - perf_start
             rate = (sent / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+
+            #save these download metrics to the analytics log
+            analytics.record_metric(
+                client_id="Client",
+                operation="DOWNLOAD",
+                file_type=file_ext,
+                file_size_bytes=sent,
+                elapsed_sec=elapsed,
+                concurrent_clients=get_active_client_count()
+            )
+
             print(f"Sent {sent} bytes at {rate:.2f} MB/s")
     finally:
         lock.release()
@@ -228,6 +275,8 @@ def delete(conn: socket.socket, req: dict):
 
 #Clients can view a list of files and subdirectories in the server’s file storage path.
 def dir(conn: socket.socket, req: dict):
+    cmd_start = time.perf_counter() #record latency for analytics
+
     rel_path = req.get("path", "")
     target_dir = os.path.abspath(os.path.join(STORAGE_DIR, rel_path))
 
@@ -243,6 +292,16 @@ def dir(conn: socket.socket, req: dict):
             "size": entry.stat().st_size if not entry.is_dir() else 0
         })
     send_json(conn, {"status": "SUCCESS", "items": items})
+
+    #directory listing latency metrics for analytics
+    analytics.record_metric(
+        client_id="Client",
+        operation="DIR_LATENCY",
+        file_type="N/A",
+        file_size_bytes=0,
+        elapsed_sec=time.perf_counter() - cmd_start,
+        concurrent_clients=get_active_client_count()
+    )
 
 #Clients can create or delete subfolders in the server’s file storage path
 def subfolder(conn: socket.socket, req: dict):
