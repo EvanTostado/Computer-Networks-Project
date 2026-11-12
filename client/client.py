@@ -8,11 +8,10 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 
-import clientAuth
+from Final.server_data import clientAuth
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
-
 
 class ModernNetworkedFileClientGUI(ctk.CTk):
 
@@ -58,28 +57,28 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             row=0, column=0, padx=5, pady=5, sticky="w"
         )
         self.ip_entry = ctk.CTkEntry(conn_grid, width=120)
-        self.ip_entry.insert(0, "")
+        self.ip_entry.insert(0, "172.20.10.2")
         self.ip_entry.grid(row=0, column=1, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Port:", font=("Arial", 12)).grid(
             row=0, column=2, padx=5, pady=5, sticky="w"
         )
         self.port_entry = ctk.CTkEntry(conn_grid, width=70)
-        self.port_entry.insert(0, "")
+        self.port_entry.insert(0, "4450")
         self.port_entry.grid(row=0, column=3, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Username:", font=("Arial", 12)).grid(
             row=0, column=4, padx=5, pady=5, sticky="w"
         )
         self.user_entry = ctk.CTkEntry(conn_grid, width=100)
-        self.user_entry.insert(0, "")
+        self.user_entry.insert(0, "test_user")
         self.user_entry.grid(row=0, column=5, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Password:", font=("Arial", 12)).grid(
             row=0, column=6, padx=5, pady=5, sticky="w"
         )
         self.pass_entry = ctk.CTkEntry(conn_grid, width=100, show="*")
-        self.pass_entry.insert(0, "")
+        self.pass_entry.insert(0, "this_is_a_test")
         self.pass_entry.grid(row=0, column=7, padx=5, pady=5)
 
         self.connect_btn = ctk.CTkButton(
@@ -91,10 +90,8 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         )
         self.connect_btn.grid(row=0, column=8, padx=10, pady=5)
 
-
         body_frame = ctk.CTkFrame(self, fg_color="transparent")
         body_frame.pack(fill="both", expand=True, padx=20, pady=10)
-
 
         left_card = ctk.CTkFrame(body_frame, corner_radius=12)
         left_card.pack(side="left", fill="both", expand=True, padx=(0, 10))
@@ -119,7 +116,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         self.file_scroll_frame.pack(
             fill="both", expand=True, padx=15, pady=(0, 15)
         )
-
 
         right_card = ctk.CTkFrame(body_frame, width=260, corner_radius=12)
         right_card.pack(side="right", fill="y", padx=(10, 0))
@@ -180,7 +176,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         ).pack(pady=5)
         ctk.CTkButton(
             right_card,
-            text="🗑Delete Subfolder",
+            text="Delete Subfolder",
             width=btn_width,
             fg_color="#d35400",
             hover_color="#b9770e",
@@ -209,6 +205,20 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         )
         self.log_textbox.pack(fill="x", padx=15, pady=(0, 15))
         self.log("System initialized. Ready to connect.")
+
+    # def clear_cells(self):
+    #     # self.ip_entry.insert(0, "")
+    #     # self.port_entry.insert(0, "")
+    #     self.user_entry.delete(0, "end")
+    #     self.pass_entry.delete(0, "end")
+
+    # def toggle_connection(self):
+    #     self.connected_to_server = not self.connected_to_server
+    #
+    #     if self.connected_to_server:
+    #         self.connect_btn.config(text="Disconnect", fg="red")
+    #     else:
+    #         self.connect_btn.config(text="Connect", fg="#1f538d")
 
     def toggle_theme(self):
         if self.theme_switch.get() == 1:
@@ -270,6 +280,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         self.is_loading = True
         self.animate_progress_pulse()
         self.log(f"Connecting to server at {ip}:{port}...")
+        self.log(f"Sock is {self.sock}")
 
         def background_connect():
             try:
@@ -298,20 +309,27 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                 self.is_loading = False
                 self.progress_bar.set(1.0)
 
-                if auth_res and auth_res.get("status") == "SUCCESS":
-                    self.connected = True
-                    self.connect_btn.configure(text="Connected", fg_color="#27ae60")
-                    self.log("Authentication successful")
-                    self.refresh_dir()
-                else:
-                    msg = (
-                        auth_res.get("message", "Unknown error")
-                        if auth_res
-                        else "No response"
-                    )
-                    self.log(f"Authentication rejected: {msg}")
-                    self.sock.close()
+                if self.connected and self.sock != None:
+                    self.connected = False
                     self.sock = None
+                    self.connect_btn.configure(text="Connect", fg_color="#1F6AA5", hover_color="#144870")
+                    # self.clear_cells()
+                else:
+                    if auth_res and auth_res.get("status") == "SUCCESS":
+                        self.connected = True
+                        self.connect_btn.configure(text="Disconnect", fg_color="red", hover_color="darkred")
+                        self.log("Authentication successful")
+                        self.refresh_dir()
+                    else:
+                        msg = (
+                            auth_res.get("message", "Unknown error")
+                            if auth_res
+                            else "No response"
+                        )
+                        # CONNECTED_TO_SERVER = False
+                        self.log(f"Authentication rejected: {msg}")
+                        self.sock.close()
+                        self.sock = None
             except Exception as e:
                 self.is_loading = False
                 self.progress_bar.set(0)
@@ -335,6 +353,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                 if res and res.get("status") == "SUCCESS":
                     items = res.get("items", [])
 
+                    # Add back button if inside a subfolder
                     if self.current_path:
                         back_btn = ctk.CTkButton(
                             self.file_scroll_frame,
