@@ -7,8 +7,8 @@ import rsa
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
-
-from Final.server_data import clientAuth
+import clientAuth
+import analytics
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -16,6 +16,13 @@ ctk.set_default_color_theme("blue")
 class ModernNetworkedFileClientGUI(ctk.CTk):
 
     def __init__(self):
+        #analytics initialization
+        self.current_path = ""
+        self.selected_file = None
+        self.client_label = "Unknown_Client"
+        analytics.init_metrics_log()
+
+
         super().__init__()
 
         self.title("File Sharing")
@@ -287,6 +294,10 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sock.connect((ip, int(port)))
 
+                #get personel ip to match the metric scheme of the server
+                local_ip, local_port = self.sock.getsockname()
+                self.client_label = f"{local_ip}:{local_port}"
+
                 self.send_json({"command": "GET_PUBKEY"})
                 res = self.recv_json()
 
@@ -344,8 +355,22 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         def background_refresh():
             try:
+                #start time for analytics metrics for directory refresh latency
+                cmd_start = time.perf_counter()
+
                 self.send_json({"command": "DIR", "path": self.current_path})
                 res = self.recv_json()
+
+                #store the directory refresh latency metrics for analytics
+                elapsed = time.perf_counter() - cmd_start
+                analytics.record_metric(
+                    source="CLIENT",
+                    client_id=self.client_label,
+                    operation="DIR",
+                    file_type="N/A",
+                    file_size_bytes=0,
+                    elapsed_sec=elapsed
+                )
 
                 for widget in self.file_scroll_frame.winfo_children():
                     widget.destroy()
@@ -457,6 +482,10 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                             return
 
                     if res and res.get("status") == "READY":
+                        #information gathering for analytics
+                        file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
+                        perf_start = time.perf_counter()
+
                         with open(file_path, "rb") as f:
                             sent = 0
                             while sent < file_size:
@@ -467,6 +496,19 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                 sent += len(chunk)
 
                         final_res = self.recv_json()
+
+                        elapsed = time.perf_counter() - perf_start #time it took to upload the file
+                        
+                        #make a record of the upload metrics for later analysis
+                        analytics.record_metric(
+                                source="CLIENT",
+                                client_id=self.client_label,
+                                operation="UPLOAD",
+                                file_type=file_ext,
+                                file_size_bytes=sent,
+                                elapsed_sec=elapsed
+                        )
+
                         self.is_loading = False
                         self.progress_bar.set(1.0)
                         if final_res and final_res.get("status") == "SUCCESS":
@@ -513,6 +555,11 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                     if res and res.get("status") == "READY":
                         filesize = res.get("filesize")
 
+                        #start gathering analytics data for the download
+                        file_ext = os.path.splitext(self.selected_file)[1].replace(".", "").upper() or "UNKNOWN"
+                        perf_start = time.perf_counter()
+
+                        
                         self.send_json({"status": "START"})
 
                         received = 0
@@ -525,6 +572,17 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                     break
                                 f.write(chunk)
                                 received += len(chunk)
+
+                        #store analytics data for the download operation
+                        elapsed = time.perf_counter() - perf_start
+                        analytics.record_metric(
+                            source="CLIENT",
+                            client_id=self.client_label,
+                            operation="DOWNLOAD",
+                            file_type=file_ext,
+                            file_size_bytes=received,
+                            elapsed_sec=elapsed
+                        )
 
                         self.is_loading = False
                         self.progress_bar.set(1.0)
