@@ -4,10 +4,10 @@ import json
 import socket
 import threading
 import shutil #Used for recursively deleting directories
-import serverAuth
+import serverAuth as serverAuth
 
 #setups the analytics logging for the server
-import analytics
+import analytics as analytics
 analytics.init_metrics_log()
 
 #keeps track of connection amount
@@ -63,14 +63,15 @@ def recv_json(conn: socket.socket) -> dict:
 
 #Initiates connection from client to server with the specified files
 def connect(conn: socket.socket, addr: tuple):
-    print(f"Client connected from {addr[0]}:{addr[1]}")
+    client_label = f"{addr[0]}:{addr[1]}"
+
+    print(f"Client connected from {client_label}")
     authenticated = False
 
     #when someone connects add to the client counter
     global active_clients
     with active_clients_lock:
         active_clients += 1
-    client_label = f"{addr[0]}:{addr[1]}"
 
     try:
         while True: #active listening for client cmds
@@ -106,16 +107,16 @@ def connect(conn: socket.socket, addr: tuple):
                 send_json(conn, {"status": "ERROR", "message": "Unauthorized."})
 
             elif cmd == "UPLOAD":
-                upload(conn, req)
+                upload(conn, req, client_label)
 
             elif cmd == "DOWNLOAD":
-                download(conn, req)
+                download(conn, req, client_label)
 
             elif cmd == "DELETE":
                 delete(conn, req)
 
             elif cmd == "DIR":
-                dir(conn, req)
+                dir(conn, req, client_label)
 
             elif cmd == "SUBFOLDER":
                 subfolder(conn, req)
@@ -124,20 +125,20 @@ def connect(conn: socket.socket, addr: tuple):
                 send_json(conn, {"status": "ERROR", "message": "Unknown command."})
 
     except (ConnectionResetError, BrokenPipeError):
-        print(f"Client {addr[0]}:{addr[1]} disconnected.") #connection lost (prevents server crash)
+        print(f"Client {client_label} disconnected.") #connection lost (prevents server crash)
     except Exception as e:
-        print(f"Client {addr[0]}:{addr[1]}: {e}")
+        print(f"Client {client_label}: {e}")
     finally:
         #when a connection is over decrement the client counter
         with active_clients_lock:
             active_clients -= 1
 
         conn.close()
-        print(f"Client {addr[0]}:{addr[1]} left.")
+        print(f"Client {client_label} left.")
 
 # Clients can upload files to the server. Server will prompt
 # client if file already exists and requires user input to be overwritten
-def upload(conn: socket.socket, req: dict):
+def upload(conn: socket.socket, req: dict, client_label: str):
     perf_start = time.perf_counter() #changed to be a more reliable system clock
     filename = req.get("filename")
     filesize = req.get("filesize")
@@ -178,7 +179,8 @@ def upload(conn: socket.socket, req: dict):
 
         #save these upload metrics to the analytics log
         analytics.record_metric(
-            client_id="Client",
+            source="SERVER",
+            client_id=client_label,
             operation="UPLOAD",
             file_type=file_ext,
             file_size_bytes=received,
@@ -196,7 +198,7 @@ def upload(conn: socket.socket, req: dict):
 
 # Clients can download files from the server. Server
 # will respond with error message if file does not exist
-def download(conn: socket.socket, req: dict):
+def download(conn: socket.socket, req: dict, client_label: str):
     filename = req.get("filename")
     rel_path = req.get("path", "")
     file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
@@ -221,7 +223,7 @@ def download(conn: socket.socket, req: dict):
         # Wait for client confirmation to begin streaming
         ack = recv_json(conn)
         if ack and ack.get("status") == "START":
-            perf_start = time.perf_counter() #record time here for analytics
+            perf_start = time.perf_counter() #record time here for analytics evrything prior in function is setup and not uploading
 
             sent = 0
             with open(filepath, "rb") as f:
@@ -234,7 +236,8 @@ def download(conn: socket.socket, req: dict):
 
             #save these download metrics to the analytics log
             analytics.record_metric(
-                client_id="Client",
+                source="SERVER",
+                client_id=client_label,
                 operation="DOWNLOAD",
                 file_type=file_ext,
                 file_size_bytes=sent,
@@ -274,7 +277,7 @@ def delete(conn: socket.socket, req: dict):
         lock.release()
 
 #Clients can view a list of files and subdirectories in the server’s file storage path.
-def dir(conn: socket.socket, req: dict):
+def dir(conn: socket.socket, req: dict, client_label: str):
     cmd_start = time.perf_counter() #record latency for analytics
 
     rel_path = req.get("path", "")
@@ -293,10 +296,11 @@ def dir(conn: socket.socket, req: dict):
         })
     send_json(conn, {"status": "SUCCESS", "items": items})
 
-    #directory listing latency metrics for analytics
+    #directory listing latency metrics for analytics #this isnt useful, its so consistent its not a useful metric
     analytics.record_metric(
-        client_id="Client",
-        operation="DIR_LATENCY",
+        source="SERVER",
+        client_id=client_label,
+        operation="DIR",
         file_type="N/A",
         file_size_bytes=0,
         elapsed_sec=time.perf_counter() - cmd_start,
