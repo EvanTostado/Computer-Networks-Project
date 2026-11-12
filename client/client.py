@@ -1,4 +1,5 @@
 import os
+import sys
 import socket
 import threading
 import time
@@ -6,6 +7,14 @@ import json
 import rsa
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
+
+AUTH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "authentication"))
+if AUTH_DIR not in sys.path:
+    sys.path.insert(0, AUTH_DIR)
+
+ANALYTICS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "analytics"))
+if ANALYTICS_DIR not in sys.path:
+    sys.path.insert(0, ANALYTICS_DIR)
 
 import clientAuth
 import analytics
