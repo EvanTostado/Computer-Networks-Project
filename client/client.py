@@ -405,6 +405,10 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                         is_dir = item["is_dir"]
                         size = item["size"]
 
+                        # from showing up as separate items in the parent directory view
+                        if not self.current_path and ("/" in name or "\\" in name):
+                            continue
+
                         display_text = (
                             f"[Folder] {name}"
                             if is_dir
@@ -435,7 +439,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
     def handle_item_click(self, name, is_dir):
         if is_dir:
             if self.current_path:
-                self.current_path = os.path.join(self.current_path, name)
+                self.current_path = f"{self.current_path}/{name}"
             else:
                 self.current_path = name
             self.refresh_dir()
@@ -444,7 +448,10 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             self.log(f"Selected file: {name}")
 
     def navigate_up(self):
-        self.current_path = os.path.dirname(self.current_path)
+        if "/" in self.current_path:
+            self.current_path = self.current_path.rsplit("/", 1)[0]
+        else:
+            self.current_path = ""
         self.refresh_dir()
 
     def upload_file(self):
@@ -457,6 +464,8 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             filename = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
 
+            normalized_path = self.current_path.replace("\\", "/")
+
             def background_upload():
                 try:
                     self.is_loading = True
@@ -466,7 +475,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                         "command": "UPLOAD",
                         "filename": filename,
                         "filesize": file_size,
-                        "path": self.current_path,
+                        "path": normalized_path,
                         "overwrite": False,
                     })
 
@@ -480,7 +489,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                 "command": "UPLOAD",
                                 "filename": filename,
                                 "filesize": file_size,
-                                "path": self.current_path,
+                                "path": normalized_path,
                                 "overwrite": True,
                             })
                             res = self.recv_json()
@@ -647,21 +656,23 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         folder_name = self.subfolder_entry.get().strip()
         if not folder_name:
-            messagebox.showwarning("Input Required", "Enter a subfolder name.")
+            messagebox.showwarning("Input Required", "Enter a subfolder name or path.")
             return
 
-        target_sub_path = (
-            os.path.join(self.current_path, folder_name)
-            if self.current_path
-            else folder_name
-        )
+        # Normalize slashes so Windows/Linux users can type "FolderA/FolderB"
+        normalized_folder_path = folder_name.replace("\\", "/")
+
+        if self.current_path:
+            target_sub_path = os.path.normpath(os.path.join(self.current_path, normalized_folder_path))
+        else:
+            target_sub_path = os.path.normpath(normalized_folder_path)
 
         def background_subfolder():
             try:
                 self.send_json({
                     "command": "SUBFOLDER",
                     "action": action,
-                    "path": target_sub_path,
+                    "path": target_sub_path.replace("\\", "/"), # Ensure forward slashes for server protocol
                 })
                 res = self.recv_json()
                 if res and res.get("status") == "SUCCESS":
