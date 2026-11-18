@@ -22,20 +22,20 @@ import analytics
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
+
 class ModernNetworkedFileClientGUI(ctk.CTk):
 
     def __init__(self):
-        #analytics initialization
+        # analytics initialization
         self.current_path = ""
         self.selected_file = None
         self.client_label = "Unknown_Client"
         analytics.init_metrics_log()
 
-
         super().__init__()
 
         self.title("File Sharing")
-        self.geometry("1000x750")
+        self.geometry("1000x780")
 
         self.sock = None
         self.connected = False
@@ -45,6 +45,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         self.create_widgets()
 
+    # GUI objects display on screen
     def create_widgets(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=20, pady=(20, 10))
@@ -62,39 +63,39 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         self.theme_switch.select()
         self.theme_switch.pack(side="right")
 
-
         conn_card = ctk.CTkFrame(self, corner_radius=12)
         conn_card.pack(fill="x", padx=20, pady=10)
 
         conn_grid = ctk.CTkFrame(conn_card, fg_color="transparent")
         conn_grid.pack(padx=15, pady=15, fill="x")
 
+        # Input boxes to connect to the server
         ctk.CTkLabel(conn_grid, text="Server IP:", font=("Arial", 12)).grid(
             row=0, column=0, padx=5, pady=5, sticky="w"
         )
         self.ip_entry = ctk.CTkEntry(conn_grid, width=120)
-        self.ip_entry.insert(0, "172.20.10.2")
+        self.ip_entry.insert(0, "")
         self.ip_entry.grid(row=0, column=1, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Port:", font=("Arial", 12)).grid(
             row=0, column=2, padx=5, pady=5, sticky="w"
         )
         self.port_entry = ctk.CTkEntry(conn_grid, width=70)
-        self.port_entry.insert(0, "4450")
+        self.port_entry.insert(0, "")
         self.port_entry.grid(row=0, column=3, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Username:", font=("Arial", 12)).grid(
             row=0, column=4, padx=5, pady=5, sticky="w"
         )
         self.user_entry = ctk.CTkEntry(conn_grid, width=100)
-        self.user_entry.insert(0, "test_user")
+        self.user_entry.insert(0, "")
         self.user_entry.grid(row=0, column=5, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Password:", font=("Arial", 12)).grid(
             row=0, column=6, padx=5, pady=5, sticky="w"
         )
         self.pass_entry = ctk.CTkEntry(conn_grid, width=100, show="*")
-        self.pass_entry.insert(0, "this_is_a_test")
+        self.pass_entry.insert(0, "")
         self.pass_entry.grid(row=0, column=7, padx=5, pady=5)
 
         self.connect_btn = ctk.CTkButton(
@@ -199,7 +200,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             command=lambda: self.manage_subfolder("delete"),
         ).pack(pady=5)
 
-
         bottom_card = ctk.CTkFrame(self, corner_radius=12)
         bottom_card.pack(fill="x", padx=20, pady=(0, 20))
 
@@ -208,9 +208,15 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         ctk.CTkLabel(
             log_top_frame,
-            text="System Log",
+            text="System Log & Transfer Progress",
             font=ctk.CTkFont(size=12, weight="bold"),
         ).pack(side="left")
+
+        # Progress text label (e.g., "50.0 MB / 100.0 MB (50.0%)")
+        self.progress_label = ctk.CTkLabel(
+            log_top_frame, text="Idle", font=ctk.CTkFont(size=11)
+        )
+        self.progress_label.pack(side="right")
 
         self.progress_bar = ctk.CTkProgressBar(bottom_card, orientation="horizontal")
         self.progress_bar.pack(fill="x", padx=15, pady=5)
@@ -222,20 +228,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         self.log_textbox.pack(fill="x", padx=15, pady=(0, 15))
         self.log("System initialized. Ready to connect.")
 
-    # def clear_cells(self):
-    #     # self.ip_entry.insert(0, "")
-    #     # self.port_entry.insert(0, "")
-    #     self.user_entry.delete(0, "end")
-    #     self.pass_entry.delete(0, "end")
-
-    # def toggle_connection(self):
-    #     self.connected_to_server = not self.connected_to_server
-    #
-    #     if self.connected_to_server:
-    #         self.connect_btn.config(text="Disconnect", fg="red")
-    #     else:
-    #         self.connect_btn.config(text="Connect", fg="#1f538d")
-
     def toggle_theme(self):
         if self.theme_switch.get() == 1:
             ctk.set_appearance_mode("Dark")
@@ -246,7 +238,38 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         self.log_textbox.insert("end", f"[{time.strftime('%H:%M:%S')}] {message}\n")
         self.log_textbox.see("end")
 
+    def format_bytes(self, size_bytes):
+        """Helper to convert bytes into human-readable MB/KB strings."""
+        if size_bytes == 0:
+            return "0 B"
+        size_name = ("B", "KB", "MB", "GB")
+        i = 0
+        p = size_bytes
+        while p >= 1024 and i < len(size_name) - 1:
+            p /= 1024.0
+            i += 1
+        return f"{p:.2f} {size_name[i]}"
+
+    def update_progress_ui(self, current, total):
+        if total > 0:
+            fraction = min(max(current / total, 0.0), 1.0)
+            percentage = fraction * 100
+            curr_str = self.format_bytes(current)
+            total_str = self.format_bytes(total)
+            text_str = f"{curr_str} / {total_str} ({percentage:.1f}%)"
+        else:
+            fraction = 0.0
+            text_str = "Idle"
+
+        def _apply():
+            self.progress_bar.set(fraction)
+            self.progress_label.configure(text=text_str)
+
+        self.after(0, _apply)
+
     def animate_progress_pulse(self):
+        """Used for indeterminate tasks like connecting/authenticating."""
+
         def pulse():
             for i in range(0, 100, 5):
                 if not getattr(self, "is_loading", False):
@@ -294,16 +317,15 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             return
 
         self.is_loading = True
+        self.progress_label.configure(text="Connecting...")
         self.animate_progress_pulse()
         self.log(f"Connecting to server at {ip}:{port}...")
-        self.log(f"Sock is {self.sock}")
 
         def background_connect():
             try:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sock.connect((ip, int(port)))
 
-                #get personel ip to match the metric scheme of the server
                 local_ip, local_port = self.sock.getsockname()
                 self.client_label = f"{local_ip}:{local_port}"
 
@@ -327,13 +349,12 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
                 auth_res = self.recv_json()
                 self.is_loading = False
-                self.progress_bar.set(1.0)
+                self.update_progress_ui(1, 1)
 
                 if self.connected and self.sock != None:
                     self.connected = False
                     self.sock = None
                     self.connect_btn.configure(text="Connect", fg_color="#1F6AA5", hover_color="#144870")
-                    # self.clear_cells()
                 else:
                     if auth_res and auth_res.get("status") == "SUCCESS":
                         self.connected = True
@@ -346,13 +367,12 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                             if auth_res
                             else "No response"
                         )
-                        # CONNECTED_TO_SERVER = False
                         self.log(f"Authentication rejected: {msg}")
                         self.sock.close()
                         self.sock = None
             except Exception as e:
                 self.is_loading = False
-                self.progress_bar.set(0)
+                self.update_progress_ui(0, 1)
                 self.log(f"Connection failure: {str(e)}")
 
         threading.Thread(target=background_connect, daemon=True).start()
@@ -364,13 +384,11 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         def background_refresh():
             try:
-                #start time for analytics metrics for directory refresh latency
                 cmd_start = time.perf_counter()
 
                 self.send_json({"command": "DIR", "path": self.current_path})
                 res = self.recv_json()
 
-                #store the directory refresh latency metrics for analytics
                 elapsed = time.perf_counter() - cmd_start
                 analytics.record_metric(
                     source="CLIENT",
@@ -387,7 +405,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                 if res and res.get("status") == "SUCCESS":
                     items = res.get("items", [])
 
-                    # Add back button if inside a subfolder
                     if self.current_path:
                         back_btn = ctk.CTkButton(
                             self.file_scroll_frame,
@@ -405,7 +422,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                         is_dir = item["is_dir"]
                         size = item["size"]
 
-                        # from showing up as separate items in the parent directory view
                         if not self.current_path and ("/" in name or "\\" in name):
                             continue
 
@@ -468,9 +484,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
             def background_upload():
                 try:
-                    self.is_loading = True
-                    self.animate_progress_pulse()
-
                     self.send_json({
                         "command": "UPLOAD",
                         "filename": filename,
@@ -494,13 +507,11 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                             })
                             res = self.recv_json()
                         else:
-                            self.is_loading = False
-                            self.progress_bar.set(0)
+                            self.update_progress_ui(0, 1)
                             self.log("Upload canceled by user.")
                             return
 
                     if res and res.get("status") == "READY":
-                        #information gathering for analytics
                         file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
                         perf_start = time.perf_counter()
 
@@ -512,37 +523,33 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                     break
                                 self.sock.sendall(chunk)
                                 sent += len(chunk)
+                                # Update progress bar dynamically during upload stream
+                                self.update_progress_ui(sent, file_size)
 
                         final_res = self.recv_json()
+                        elapsed = time.perf_counter() - perf_start
 
-                        elapsed = time.perf_counter() - perf_start #time it took to upload the file
-                        
-                        #make a record of the upload metrics for later analysis
                         analytics.record_metric(
-                                source="CLIENT",
-                                client_id=self.client_label,
-                                operation="UPLOAD",
-                                file_type=file_ext,
-                                file_size_bytes=sent,
-                                elapsed_sec=elapsed
+                            source="CLIENT",
+                            client_id=self.client_label,
+                            operation="UPLOAD",
+                            file_type=file_ext,
+                            file_size_bytes=sent,
+                            elapsed_sec=elapsed
                         )
 
-                        self.is_loading = False
-                        self.progress_bar.set(1.0)
                         if final_res and final_res.get("status") == "SUCCESS":
                             self.log(f"Successfully uploaded '{filename}'.")
                             self.refresh_dir()
                         else:
                             self.log("Upload failed during streaming.")
                     else:
-                        self.is_loading = False
-                        self.progress_bar.set(0)
+                        self.update_progress_ui(0, 1)
                         self.log(
                             f"Server rejected upload: {res.get('message') if res else ''}"
                         )
                 except Exception as e:
-                    self.is_loading = False
-                    self.progress_bar.set(0)
+                    self.update_progress_ui(0, 1)
                     self.log(f"Upload error: {e}")
 
             threading.Thread(target=background_upload, daemon=True).start()
@@ -560,9 +567,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
             def background_download():
                 try:
-                    self.is_loading = True
-                    self.animate_progress_pulse()
-
                     self.send_json({
                         "command": "DOWNLOAD",
                         "filename": self.selected_file,
@@ -572,12 +576,9 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                     res = self.recv_json()
                     if res and res.get("status") == "READY":
                         filesize = res.get("filesize")
-
-                        #start gathering analytics data for the download
                         file_ext = os.path.splitext(self.selected_file)[1].replace(".", "").upper() or "UNKNOWN"
                         perf_start = time.perf_counter()
 
-                        
                         self.send_json({"status": "START"})
 
                         received = 0
@@ -590,8 +591,9 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                     break
                                 f.write(chunk)
                                 received += len(chunk)
+                                # Update progress bar dynamically during download stream
+                                self.update_progress_ui(received, filesize)
 
-                        #store analytics data for the download operation
                         elapsed = time.perf_counter() - perf_start
                         analytics.record_metric(
                             source="CLIENT",
@@ -602,18 +604,14 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                             elapsed_sec=elapsed
                         )
 
-                        self.is_loading = False
-                        self.progress_bar.set(1.0)
                         self.log(f"Downloaded '{self.selected_file}' successfully.")
                     else:
-                        self.is_loading = False
-                        self.progress_bar.set(0)
+                        self.update_progress_ui(0, 1)
                         self.log(
                             f"Download error: {res.get('message') if res else 'Unknown'}"
                         )
                 except Exception as e:
-                    self.is_loading = False
-                    self.progress_bar.set(0)
+                    self.update_progress_ui(0, 1)
                     self.log(f"Download exception: {e}")
 
             threading.Thread(target=background_download, daemon=True).start()
@@ -659,7 +657,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             messagebox.showwarning("Input Required", "Enter a subfolder name or path.")
             return
 
-        # Normalize slashes so Windows/Linux users can type "FolderA/FolderB"
         normalized_folder_path = folder_name.replace("\\", "/")
 
         if self.current_path:
@@ -672,7 +669,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                 self.send_json({
                     "command": "SUBFOLDER",
                     "action": action,
-                    "path": target_sub_path.replace("\\", "/"), # Ensure forward slashes for server protocol
+                    "path": target_sub_path.replace("\\", "/"),
                 })
                 res = self.recv_json()
                 if res and res.get("status") == "SUCCESS":
