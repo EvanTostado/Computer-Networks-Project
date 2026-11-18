@@ -126,6 +126,9 @@ def connect(conn: socket.socket, addr: tuple):
             elif cmd == "UPLOAD":
                 upload(conn, req, client_label)
 
+            elif cmd == "RESUME_UPLOAD":
+                resume_upload(conn, req, client_label)
+
             elif cmd == "DOWNLOAD":
                 download(conn, req, client_label)
 
@@ -214,6 +217,86 @@ def upload(conn: socket.socket, req: dict, client_label: str):
             "message": f"Uploaded {received} bytes successfully.",
             "metrics": {"time_sec": round(elapsed, 4), "rate_mbps": round(rate, 2)}
         })
+    finally:
+        lock.release()
+
+
+# Allows clients to resume an interrupted file upload from a specified server-side offset
+def resume_upload(conn: socket.socket, req: dict, client_label: str):
+    filename = req.get("filename")
+    rel_path = req.get("path", "")
+    total_filesize = req.get("filesize", 0)
+    file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
+
+    target_dir = os.path.abspath(os.path.join(STORAGE_DIR, rel_path))
+    if not target_dir.startswith(STORAGE_DIR):
+        send_json(conn, {"status": "ERROR", "message": "Path not in directory."})
+        return
+
+    os.makedirs(target_dir, exist_ok=True)
+    filepath = os.path.join(target_dir, filename)
+
+    lock = get_file_lock(filepath)
+    if not lock.acquire(blocking=False):
+        send_json(conn, {"status": "ERROR", "message": "File is currently being processed."})
+        return
+
+    try:
+        # Determine existing partial file size on server storage
+        server_offset = 0
+        if os.path.exists(filepath):
+            server_offset = os.path.getsize(filepath)
+
+        send_json(conn, {
+            "status": "READY",
+            "offset": server_offset
+        })
+
+        if server_offset >= total_filesize:
+            print(f"File '{filename}' already fully uploaded for {client_label}")
+            send_json(conn, {"status": "SUCCESS", "message": "File already fully uploaded."})
+            return
+
+        perf_start = time.perf_counter()
+        received = server_offset
+
+        # Open file in append mode ("ab") to preserve existing bytes
+        with open(filepath, "ab") as f:
+            while received < total_filesize:
+                chunk = conn.recv(min(BUFFER_SIZE, total_filesize - received))
+                if not chunk:
+                    break
+                f.write(chunk)
+                received += len(chunk)
+
+        elapsed = time.perf_counter() - perf_start
+
+        # Compute SHA-256 integrity hash of the final uploaded file
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        file_sha256 = sha256_hash.hexdigest()
+
+        analytics.record_metric(
+            source="SERVER",
+            client_id=client_label,
+            operation="UPLOAD_RESUME",
+            file_type=file_ext,
+            file_size_bytes=(received - server_offset),
+            elapsed_sec=elapsed,
+            concurrent_clients=get_active_client_count()
+        )
+
+        send_json(conn, {
+            "status": "SUCCESS",
+            "message": f"Resumed upload completed. {received} bytes total.",
+            "sha256": file_sha256
+        })
+        print(f"Resumed and received {received - server_offset} bytes for '{filename}' from {client_label}")
+
+    except Exception as e:
+        send_json(conn, {"status": "ERROR", "message": f"Resume upload failed: {str(e)}"})
     finally:
         lock.release()
 
