@@ -74,28 +74,28 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             row=0, column=0, padx=5, pady=5, sticky="w"
         )
         self.ip_entry = ctk.CTkEntry(conn_grid, width=120)
-        self.ip_entry.insert(0, "")
+        self.ip_entry.insert(0, "172.20.10.2")
         self.ip_entry.grid(row=0, column=1, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Port:", font=("Arial", 12)).grid(
             row=0, column=2, padx=5, pady=5, sticky="w"
         )
         self.port_entry = ctk.CTkEntry(conn_grid, width=70)
-        self.port_entry.insert(0, "")
+        self.port_entry.insert(0, "4450")
         self.port_entry.grid(row=0, column=3, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Username:", font=("Arial", 12)).grid(
             row=0, column=4, padx=5, pady=5, sticky="w"
         )
         self.user_entry = ctk.CTkEntry(conn_grid, width=100)
-        self.user_entry.insert(0, "")
+        self.user_entry.insert(0, "test_user")
         self.user_entry.grid(row=0, column=5, padx=5, pady=5)
 
         ctk.CTkLabel(conn_grid, text="Password:", font=("Arial", 12)).grid(
             row=0, column=6, padx=5, pady=5, sticky="w"
         )
         self.pass_entry = ctk.CTkEntry(conn_grid, width=100, show="*")
-        self.pass_entry.insert(0, "")
+        self.pass_entry.insert(0, "this_is_a_test")
         self.pass_entry.grid(row=0, column=7, padx=5, pady=5)
 
         self.connect_btn = ctk.CTkButton(
