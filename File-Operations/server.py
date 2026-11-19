@@ -5,7 +5,7 @@ import json
 import socket
 import threading
 import hashlib
-import shutil  # Used for recursively deleting directories
+import shutil
 
 AUTH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "authentication"))
 if AUTH_DIR not in sys.path:
