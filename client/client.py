@@ -244,8 +244,8 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         self.log_textbox.insert("end", f"[{time.strftime('%H:%M:%S')}] {message}\n")
         self.log_textbox.see("end")
 
+    # convert bytes into MB/KB strings
     def format_bytes(self, size_bytes):
-        """Helper to convert bytes into human-readable MB/KB strings."""
         if size_bytes == 0:
             return "0 B"
         size_name = ("B", "KB", "MB", "GB")
@@ -256,8 +256,8 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             i += 1
         return f"{p:.2f} {size_name[i]}"
 
+    # updates the progress bar from background threads
     def update_progress_ui(self, current, total):
-        """Safely updates the progress bar and label from background threads using after()."""
         if total > 0:
             fraction = min(max(current / total, 0.0), 1.0)
             percentage = fraction * 100
@@ -274,8 +274,8 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         self.after(0, _apply)
 
+    # Progress bar changes for connecting/authenticating
     def animate_progress_pulse(self):
-        """Used for indeterminate tasks like connecting/authenticating."""
         def pulse():
             for i in range(0, 100, 5):
                 if not getattr(self, "is_loading", False):
@@ -390,6 +390,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         threading.Thread(target=background_connect, daemon=True).start()
 
+    # Refreshes the Directory
     def refresh_dir(self):
         if not self.sock or not self.connected:
             messagebox.showwarning("Not Connected", "Please connect to the server first.")
@@ -483,6 +484,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             self.current_path = ""
         self.refresh_dir()
 
+    # Upload the file
     def upload_file(self):
         if not self.sock or not self.connected:
             messagebox.showwarning("Not Connected", "Please connect first.")
@@ -566,8 +568,8 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
             threading.Thread(target=background_upload, daemon=True).start()
 
+    # Resumes uploading a local file if interrupted
     def resume_upload_file(self):
-        """Resumes/continues uploading a local file from the offset reported by the server."""
         if not self.sock or not self.connected:
             messagebox.showwarning("Not Connected", "Please connect first.")
             return
@@ -582,7 +584,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         def background_resume_upload():
             try:
-                # 1. Send RESUME_UPLOAD request to check existing partial size on the server
+                # send RESUME_UPLOAD request to check existing partial size on the server
                 self.send_json({
                     "command": "RESUME_UPLOAD",
                     "filename": filename,
@@ -604,7 +606,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                     sent = server_offset
                     self.log(f"Resuming upload for '{filename}' from byte {server_offset}/{total_filesize}...")
 
-                    # 2. Open local file in binary read mode and seek to server offset
+                    # open local file in binary read mode
                     with open(file_path, "rb") as f:
                         f.seek(server_offset)
                         while sent < total_filesize:
@@ -615,7 +617,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                             sent += len(chunk)
                             self.update_progress_ui(sent, total_filesize)
 
-                    # 3. Receive final status and SHA-256 integrity verification hash from server
+                    # receive final status from server
                     final_res = self.recv_json()
                     elapsed = time.perf_counter() - perf_start
 
@@ -656,12 +658,12 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
         def background_download():
             try:
-                # 1. Determine local file size to support resuming
+                # determine local file size
                 local_bytes = 0
                 if os.path.exists(save_path):
                     local_bytes = os.path.getsize(save_path)
 
-                # 2. Send RESUME_DOWNLOAD command including filename, path, and offset
+                # send RESUME_DOWNLOAD command
                 self.send_json({
                     "command": "RESUME_DOWNLOAD",
                     "filename": self.selected_file,
@@ -685,7 +687,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                         self.log(
                             f"Resuming download for '{self.selected_file}' from byte {local_bytes}/{total_filesize}...")
 
-                        # 3. Open file in append mode ("ab") to preserve downloaded bytes
+                        # open file in append mode save downloaded bytes
                         with open(save_path, "ab") as f:
                             while received < total_filesize:
                                 chunk = self.sock.recv(
@@ -697,7 +699,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                 received += len(chunk)
                                 self.update_progress_ui(received, total_filesize)
 
-                    # 4. Receive and verify SHA-256 integrity hash from server
+                    # receive and verify from server
                     hash_res = self.recv_json()
                     elapsed = time.perf_counter() - perf_start
 
