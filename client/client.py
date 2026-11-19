@@ -17,6 +17,7 @@ ANALYTICS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 if ANALYTICS_DIR not in sys.path:
     sys.path.insert(0, ANALYTICS_DIR)
 
+#import python files from other folders to help with connection and auth and analytics
 import clientAuth
 import analytics
 
