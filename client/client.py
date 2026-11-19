@@ -118,6 +118,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         path_frame = ctk.CTkFrame(left_card, fg_color="transparent")
         path_frame.pack(fill="x", padx=15, pady=(15, 5))
 
+        # Dir displays files and folders
         ctk.CTkLabel(
             path_frame,
             text="Server File Storage",
@@ -140,6 +141,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         right_card.pack(side="right", fill="y", padx=(10, 0))
         right_card.pack_propagate(False)
 
+        # Right card actions and buttons
         ctk.CTkLabel(
             right_card,
             text="File Actions",
