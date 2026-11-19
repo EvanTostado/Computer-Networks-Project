@@ -210,6 +210,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             command=lambda: self.manage_subfolder("delete"),
         ).pack(pady=5)
 
+        #bottom footer of the GUI, shows progress bar and logs
         bottom_card = ctk.CTkFrame(self, corner_radius=12)
         bottom_card.pack(fill="x", padx=20, pady=(0, 20))
 
