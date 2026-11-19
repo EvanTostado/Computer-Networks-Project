@@ -4,7 +4,8 @@ import time
 import json
 import socket
 import threading
-import shutil #Used for recursively deleting directories
+import hashlib
+import shutil  # Used for recursively deleting directories
 
 AUTH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "authentication"))
 if AUTH_DIR not in sys.path:
@@ -14,51 +15,55 @@ ANALYTICS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 if ANALYTICS_DIR not in sys.path:
     sys.path.insert(0, ANALYTICS_DIR)
 
-
 import serverAuth as serverAuth
 
-#setups the analytics logging for the server
+# setups the analytics logging for the server
 import analytics as analytics
+
 analytics.init_metrics_log()
 
-#keeps track of connection amount
+# keeps track of connection amount
 active_clients = 0
 active_clients_lock = threading.Lock()
 
-#returns the client count
+
+# returns the client count
 def get_active_client_count() -> int:
     with active_clients_lock:
         return active_clients
 
 
-HOST = "0.0.0.0"  
+HOST = "0.0.0.0"
 PORT = 4450
 STORAGE_DIR = os.path.abspath("./server_storage")
-BUFFER_SIZE = 64 * 1024  #64 KB chunk size for efficient file transfer
+BUFFER_SIZE = 64 * 1024  # 64 KB chunk size for efficient file transfer
 
-#storage directory
+# storage directory
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
 
 file_locks = {}
-file_locks_guard = threading.Lock() #A thread lock protecting when multiple threads try to register a new file lock at the same time
+file_locks_guard = threading.Lock()  # A thread lock protecting when multiple threads try to register a new file lock at the same time
 
-#Retrieves or creates a thread lock for a specific file path
-#ensuring two clients cannot modify or delete the same file simultaneously
-def get_file_lock(filepath: str) -> threading.Lock: 
+
+# Retrieves or creates a thread lock for a specific file path
+# ensuring two clients cannot modify or delete the same file simultaneously
+def get_file_lock(filepath: str) -> threading.Lock:
     with file_locks_guard:
         if filepath not in file_locks:
             file_locks[filepath] = threading.Lock()
         return file_locks[filepath]
 
-#Sends a JSON-encoded message header with a fixed 4-byte length prefix
-#ends it over the socket prefixed with a 4-byte big-endian length header to prevent TCP packet fragmentation
+
+# Sends a JSON-encoded message header with a fixed 4-byte length prefix
+# ends it over the socket prefixed with a 4-byte big-endian length header to prevent TCP packet fragmentation
 def send_json(conn: socket.socket, data: dict):
     payload = json.dumps(data).encode("utf-8")
     length = len(payload)
     conn.sendall(length.to_bytes(4, byteorder="big") + payload)
 
-#Receives a JSON-encoded message header using a fixed 4-byte length prefix
+
+# Receives a JSON-encoded message header using a fixed 4-byte length prefix
 def recv_json(conn: socket.socket) -> dict:
     raw_length = conn.recv(4)
     if not raw_length:
@@ -72,27 +77,28 @@ def recv_json(conn: socket.socket) -> dict:
         data.extend(packet)
     return json.loads(data.decode("utf-8"))
 
-#Initiates connection from client to server with the specified files
+
+# Initiates connection from client to server with the specified files
 def connect(conn: socket.socket, addr: tuple):
     client_label = f"{addr[0]}:{addr[1]}"
 
     print(f"Client connected from {client_label}")
     authenticated = False
 
-    #when someone connects add to the client counter
+    # when someone connects add to the client counter
     global active_clients
     with active_clients_lock:
         active_clients += 1
 
     try:
-        while True: #active listening for client cmds
+        while True:  # active listening for client cmds
             req = recv_json(conn)
             if not req:
                 break
 
             cmd = req.get("command")
 
-            #cmds
+            # cmds
             if cmd == "GET_PUBKEY":
                 pub_key = serverAuth.requestPublicKey()
                 pub_bytes = pub_key.save_pkcs1().decode("utf-8")
@@ -102,10 +108,10 @@ def connect(conn: socket.socket, addr: tuple):
                 try:
                     enc_user = bytes.fromhex(req.get("username"))
                     enc_pass = bytes.fromhex(req.get("password"))
-                    
+
                     user = serverAuth.decryptPassword(enc_user)
                     password = serverAuth.decryptPassword(enc_pass)
-                    
+
                     if serverAuth.authenticate(user, password):
                         authenticated = True
                         send_json(conn, {"status": "SUCCESS", "message": "Client joined."})
@@ -114,14 +120,20 @@ def connect(conn: socket.socket, addr: tuple):
                 except Exception as e:
                     send_json(conn, {"status": "ERROR", "message": f"Authentication failed: {str(e)}"})
 
-            elif not authenticated: #blocks the unauthorized
+            elif not authenticated:  # blocks the unauthorized
                 send_json(conn, {"status": "ERROR", "message": "Unauthorized."})
 
             elif cmd == "UPLOAD":
                 upload(conn, req, client_label)
 
+            elif cmd == "RESUME_UPLOAD":
+                resume_upload(conn, req, client_label)
+
             elif cmd == "DOWNLOAD":
                 download(conn, req, client_label)
+
+            elif cmd == "RESUME_DOWNLOAD":
+                resume_download(conn, req, client_label)
 
             elif cmd == "DELETE":
                 delete(conn, req)
@@ -136,21 +148,22 @@ def connect(conn: socket.socket, addr: tuple):
                 send_json(conn, {"status": "ERROR", "message": "Unknown command."})
 
     except (ConnectionResetError, BrokenPipeError):
-        print(f"Client {client_label} disconnected.") #connection lost (prevents server crash)
+        print(f"Client {client_label} disconnected.")  # connection lost (prevents server crash)
     except Exception as e:
         print(f"Client {client_label}: {e}")
     finally:
-        #when a connection is over decrement the client counter
+        # when a connection is over decrement the client counter
         with active_clients_lock:
             active_clients -= 1
 
         conn.close()
         print(f"Client {client_label} left.")
 
+
 # Clients can upload files to the server. Server will prompt
 # client if file already exists and requires user input to be overwritten
 def upload(conn: socket.socket, req: dict, client_label: str):
-    perf_start = time.perf_counter() #changed to be a more reliable system clock
+    perf_start = time.perf_counter()  # changed to be a more reliable system clock
     filename = req.get("filename")
     filesize = req.get("filesize")
     file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
@@ -184,11 +197,11 @@ def upload(conn: socket.socket, req: dict, client_label: str):
                     break
                 f.write(chunk)
                 received += len(chunk)
-        
+
         elapsed = time.perf_counter() - perf_start
         rate = (received / (1024 * 1024)) / elapsed if elapsed > 0 else 0
 
-        #save these upload metrics to the analytics log
+        # save these upload metrics to the analytics log
         analytics.record_metric(
             source="SERVER",
             client_id=client_label,
@@ -198,7 +211,7 @@ def upload(conn: socket.socket, req: dict, client_label: str):
             elapsed_sec=elapsed,
             concurrent_clients=get_active_client_count()
         )
-        
+
         send_json(conn, {
             "status": "SUCCESS",
             "message": f"Uploaded {received} bytes successfully.",
@@ -206,6 +219,87 @@ def upload(conn: socket.socket, req: dict, client_label: str):
         })
     finally:
         lock.release()
+
+
+# Allows clients to resume an interrupted file upload from a specified server-side offset
+def resume_upload(conn: socket.socket, req: dict, client_label: str):
+    filename = req.get("filename")
+    rel_path = req.get("path", "")
+    total_filesize = req.get("filesize", 0)
+    file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
+
+    target_dir = os.path.abspath(os.path.join(STORAGE_DIR, rel_path))
+    if not target_dir.startswith(STORAGE_DIR):
+        send_json(conn, {"status": "ERROR", "message": "Path not in directory."})
+        return
+
+    os.makedirs(target_dir, exist_ok=True)
+    filepath = os.path.join(target_dir, filename)
+
+    lock = get_file_lock(filepath)
+    if not lock.acquire(blocking=False):
+        send_json(conn, {"status": "ERROR", "message": "File is currently being processed."})
+        return
+
+    try:
+        # Determine existing partial file size on server storage
+        server_offset = 0
+        if os.path.exists(filepath):
+            server_offset = os.path.getsize(filepath)
+
+        send_json(conn, {
+            "status": "READY",
+            "offset": server_offset
+        })
+
+        if server_offset >= total_filesize:
+            print(f"File '{filename}' already fully uploaded for {client_label}")
+            send_json(conn, {"status": "SUCCESS", "message": "File already fully uploaded."})
+            return
+
+        perf_start = time.perf_counter()
+        received = server_offset
+
+        # Open file in append mode ("ab") to preserve existing bytes
+        with open(filepath, "ab") as f:
+            while received < total_filesize:
+                chunk = conn.recv(min(BUFFER_SIZE, total_filesize - received))
+                if not chunk:
+                    break
+                f.write(chunk)
+                received += len(chunk)
+
+        elapsed = time.perf_counter() - perf_start
+
+        # Compute SHA-256 integrity hash of the final uploaded file
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        file_sha256 = sha256_hash.hexdigest()
+
+        analytics.record_metric(
+            source="SERVER",
+            client_id=client_label,
+            operation="UPLOAD_RESUME",
+            file_type=file_ext,
+            file_size_bytes=(received - server_offset),
+            elapsed_sec=elapsed,
+            concurrent_clients=get_active_client_count()
+        )
+
+        send_json(conn, {
+            "status": "SUCCESS",
+            "message": f"Resumed upload completed. {received} bytes total.",
+            "sha256": file_sha256
+        })
+        print(f"Resumed and received {received - server_offset} bytes for '{filename}' from {client_label}")
+
+    except Exception as e:
+        send_json(conn, {"status": "ERROR", "message": f"Resume upload failed: {str(e)}"})
+    finally:
+        lock.release()
+
 
 # Clients can download files from the server. Server
 # will respond with error message if file does not exist
@@ -234,7 +328,7 @@ def download(conn: socket.socket, req: dict, client_label: str):
         # Wait for client confirmation to begin streaming
         ack = recv_json(conn)
         if ack and ack.get("status") == "START":
-            perf_start = time.perf_counter() #record time here for analytics evrything prior in function is setup and not uploading
+            perf_start = time.perf_counter()  # record time here for analytics
 
             sent = 0
             with open(filepath, "rb") as f:
@@ -245,7 +339,7 @@ def download(conn: socket.socket, req: dict, client_label: str):
             elapsed = time.perf_counter() - perf_start
             rate = (sent / (1024 * 1024)) / elapsed if elapsed > 0 else 0
 
-            #save these download metrics to the analytics log
+            # save these download metrics to the analytics log
             analytics.record_metric(
                 source="SERVER",
                 client_id=client_label,
@@ -259,6 +353,77 @@ def download(conn: socket.socket, req: dict, client_label: str):
             print(f"Sent {sent} bytes at {rate:.2f} MB/s")
     finally:
         lock.release()
+
+
+# Allows clients to resume an interrupted file download from a specified byte offset
+def resume_download(conn: socket.socket, req: dict, client_label: str):
+    filename = req.get("filename")
+    rel_path = req.get("path", "")
+    client_offset = req.get("offset", 0)
+    file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
+
+    filepath = os.path.abspath(os.path.join(STORAGE_DIR, rel_path, filename))
+    if not filepath.startswith(STORAGE_DIR) or not os.path.exists(filepath) or not os.path.isfile(filepath):
+        send_json(conn, {"status": "ERROR", "message": "File does not exist."})
+        return
+
+    lock = get_file_lock(filepath)
+    if not lock.acquire(blocking=False):
+        send_json(conn, {"status": "ERROR", "message": "File is currently being processed."})
+        return
+
+    try:
+        total_filesize = os.path.getsize(filepath)
+        send_json(conn, {
+            "status": "READY",
+            "filesize": total_filesize
+        })
+
+        start_ack = recv_json(conn)
+        if not start_ack or start_ack.get("status") != "START":
+            return
+
+        perf_start = time.perf_counter()
+
+        # Calculate SHA-256 hash of the full server-side file for integrity verification
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        file_sha256 = sha256_hash.hexdigest()
+
+        # Stream remaining data starting from client_offset
+        bytes_sent = 0
+        with open(filepath, "rb") as f:
+            f.seek(client_offset)
+            while True:
+                chunk = f.read(BUFFER_SIZE)
+                if not chunk:
+                    break
+                conn.sendall(chunk)
+                bytes_sent += len(chunk)
+
+        elapsed = time.perf_counter() - perf_start
+        analytics.record_metric(
+            source="SERVER",
+            client_id=client_label,
+            operation="DOWNLOAD_RESUME",
+            file_type=file_ext,
+            file_size_bytes=bytes_sent,
+            elapsed_sec=elapsed,
+            concurrent_clients=get_active_client_count()
+        )
+
+        # Send SHA-256 hash to client for integrity check
+        send_json(conn, {
+            "status": "HASH",
+            "sha256": file_sha256
+        })
+        print(f"Served {bytes_sent} bytes (offset {client_offset}) for '{filename}' to {client_label}")
+
+    finally:
+        lock.release()
+
 
 # Clients can delete files from the server. Server will respond with
 # error message if file is currently being processed or does not exist
@@ -276,8 +441,8 @@ def delete(conn: socket.socket, req: dict):
         send_json(conn, {"status": "ERROR", "message": "File is currently being processed."})
         return
 
-    try: 
-        if os.path.isdir(filepath): #os.remove for files, shutil.rmtree for directories
+    try:
+        if os.path.isdir(filepath):  # os.remove for files, shutil.rmtree for directories
             shutil.rmtree(filepath)
         else:
             os.remove(filepath)
@@ -287,9 +452,10 @@ def delete(conn: socket.socket, req: dict):
     finally:
         lock.release()
 
-#Clients can view a list of files and subdirectories in the server’s file storage path.
+
+# Clients can view a list of files and subdirectories in the server’s file storage path.
 def dir(conn: socket.socket, req: dict, client_label: str):
-    cmd_start = time.perf_counter() #record latency for analytics
+    cmd_start = time.perf_counter()  # record latency for analytics
 
     rel_path = req.get("path", "")
     target_dir = os.path.abspath(os.path.join(STORAGE_DIR, rel_path))
@@ -307,7 +473,7 @@ def dir(conn: socket.socket, req: dict, client_label: str):
         })
     send_json(conn, {"status": "SUCCESS", "items": items})
 
-    #directory listing latency metrics for analytics #this isnt useful, its so consistent its not a useful metric
+    # directory listing latency metrics for analytics
     analytics.record_metric(
         source="SERVER",
         client_id=client_label,
@@ -318,9 +484,10 @@ def dir(conn: socket.socket, req: dict, client_label: str):
         concurrent_clients=get_active_client_count()
     )
 
-#Clients can create or delete subfolders in the server’s file storage path
+
+# Clients can create or delete subfolders in the server’s file storage path
 def subfolder(conn: socket.socket, req: dict):
-    action = req.get("action")  #create or delete
+    action = req.get("action")  # create or delete
     folder_path = req.get("path", "")
     target_path = os.path.abspath(os.path.join(STORAGE_DIR, folder_path))
 
@@ -340,6 +507,7 @@ def subfolder(conn: socket.socket, req: dict):
     else:
         send_json(conn, {"status": "ERROR", "message": "Invalid action."})
 
+
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -350,13 +518,14 @@ def start_server():
 
     try:
         while True:
-            conn, addr = server_socket.accept() #Continuously accepts incoming client connections
+            conn, addr = server_socket.accept()  # Continuously accepts incoming client connections
             client_thread = threading.Thread(target=connect, args=(conn, addr), daemon=True)
             client_thread.start()
     except KeyboardInterrupt:
         print("Closing server.")
     finally:
         server_socket.close()
+
 
 if __name__ == "__main__":
     start_server()
