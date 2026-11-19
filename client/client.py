@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 import json
+import hashlib
 import rsa
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
@@ -159,6 +160,12 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         ).pack(pady=5)
         ctk.CTkButton(
             right_card,
+            text="Continue Upload",
+            width=btn_width,
+            command=self.resume_upload_file,
+        ).pack(pady=5)
+        ctk.CTkButton(
+            right_card,
             text="Download Selected",
             width=btn_width,
             command=self.download_file,
@@ -171,6 +178,12 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             hover_color="#962d22",
             command=self.delete_file,
         ).pack(pady=5)
+        # ctk.CTkButton(
+        #     right_card,
+        #     text="Continue Download",
+        #     width=btn_width,
+        #     command=self.download_file,  # Resumed inside download_file automatically
+        # ).pack(pady=5)
 
         ctk.CTkLabel(
             right_card,
@@ -212,7 +225,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
         ).pack(side="left")
 
-        # Progress text label (e.g., "50.0 MB / 100.0 MB (50.0%)")
         self.progress_label = ctk.CTkLabel(
             log_top_frame, text="Idle", font=ctk.CTkFont(size=11)
         )
@@ -251,6 +263,7 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         return f"{p:.2f} {size_name[i]}"
 
     def update_progress_ui(self, current, total):
+        """Safely updates the progress bar and label from background threads using after()."""
         if total > 0:
             fraction = min(max(current / total, 0.0), 1.0)
             percentage = fraction * 100
@@ -269,7 +282,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
     def animate_progress_pulse(self):
         """Used for indeterminate tasks like connecting/authenticating."""
-
         def pulse():
             for i in range(0, 100, 5):
                 if not getattr(self, "is_loading", False):
@@ -309,6 +321,18 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
         port = self.port_entry.get()
         username = self.user_entry.get()
         password = self.pass_entry.get()
+
+        if self.connected:
+            try:
+                if self.sock:
+                    self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+            self.connected = False
+            self.connect_btn.configure(text="Connect", fg_color="#1F6AA5", hover_color="#144870")
+            self.log("Disconnected from server.")
+            return
 
         if not ip or not port or not username or not password:
             messagebox.showerror(
@@ -351,25 +375,20 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                 self.is_loading = False
                 self.update_progress_ui(1, 1)
 
-                if self.connected and self.sock != None:
-                    self.connected = False
-                    self.sock = None
-                    self.connect_btn.configure(text="Connect", fg_color="#1F6AA5", hover_color="#144870")
+                if auth_res and auth_res.get("status") == "SUCCESS":
+                    self.connected = True
+                    self.connect_btn.configure(text="Disconnect", fg_color="red", hover_color="darkred")
+                    self.log("Authentication successful")
+                    self.refresh_dir()
                 else:
-                    if auth_res and auth_res.get("status") == "SUCCESS":
-                        self.connected = True
-                        self.connect_btn.configure(text="Disconnect", fg_color="red", hover_color="darkred")
-                        self.log("Authentication successful")
-                        self.refresh_dir()
-                    else:
-                        msg = (
-                            auth_res.get("message", "Unknown error")
-                            if auth_res
-                            else "No response"
-                        )
-                        self.log(f"Authentication rejected: {msg}")
-                        self.sock.close()
-                        self.sock = None
+                    msg = (
+                        auth_res.get("message", "Unknown error")
+                        if auth_res
+                        else "No response"
+                    )
+                    self.log(f"Authentication rejected: {msg}")
+                    self.sock.close()
+                    self.sock = None
             except Exception as e:
                 self.is_loading = False
                 self.update_progress_ui(0, 1)
@@ -523,7 +542,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
                                     break
                                 self.sock.sendall(chunk)
                                 sent += len(chunk)
-                                # Update progress bar dynamically during upload stream
                                 self.update_progress_ui(sent, file_size)
 
                         final_res = self.recv_json()
@@ -554,6 +572,82 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
 
             threading.Thread(target=background_upload, daemon=True).start()
 
+    def resume_upload_file(self):
+        """Resumes/continues uploading a local file from the offset reported by the server."""
+        if not self.sock or not self.connected:
+            messagebox.showwarning("Not Connected", "Please connect first.")
+            return
+
+        file_path = filedialog.askopenfilename(title="Select file to resume uploading")
+        if not file_path:
+            return
+
+        filename = os.path.basename(file_path)
+        total_filesize = os.path.getsize(file_path)
+        normalized_path = self.current_path.replace("\\", "/")
+
+        def background_resume_upload():
+            try:
+                # 1. Send RESUME_UPLOAD request to check existing partial size on the server
+                self.send_json({
+                    "command": "RESUME_UPLOAD",
+                    "filename": filename,
+                    "path": normalized_path,
+                    "filesize": total_filesize
+                })
+
+                res = self.recv_json()
+                if res and res.get("status") == "READY":
+                    server_offset = res.get("offset", 0)
+                    file_ext = os.path.splitext(filename)[1].replace(".", "").upper() or "UNKNOWN"
+                    perf_start = time.perf_counter()
+
+                    if server_offset >= total_filesize:
+                        self.log(f"File '{filename}' is already fully uploaded on server.")
+                        self.update_progress_ui(total_filesize, total_filesize)
+                        return
+
+                    sent = server_offset
+                    self.log(f"Resuming upload for '{filename}' from byte {server_offset}/{total_filesize}...")
+
+                    # 2. Open local file in binary read mode and seek to server offset
+                    with open(file_path, "rb") as f:
+                        f.seek(server_offset)
+                        while sent < total_filesize:
+                            chunk = f.read(self.BUFFER_SIZE)
+                            if not chunk:
+                                break
+                            self.sock.sendall(chunk)
+                            sent += len(chunk)
+                            self.update_progress_ui(sent, total_filesize)
+
+                    # 3. Receive final status and SHA-256 integrity verification hash from server
+                    final_res = self.recv_json()
+                    elapsed = time.perf_counter() - perf_start
+
+                    if final_res and final_res.get("status") == "SUCCESS":
+                        self.log(f"Successfully resumed and completed upload for '{filename}'.")
+                        analytics.record_metric(
+                            source="CLIENT",
+                            client_id=self.client_label,
+                            operation="UPLOAD_RESUME",
+                            file_type=file_ext,
+                            file_size_bytes=(total_filesize - server_offset),
+                            elapsed_sec=elapsed
+                        )
+                        self.refresh_dir()
+                    else:
+                        self.log(f"Resume upload failed: {final_res.get('message') if final_res else 'Unknown error'}")
+                else:
+                    self.update_progress_ui(0, 1)
+                    self.log(f"Server rejected resume upload: {res.get('message') if res else 'Unknown error'}")
+
+            except Exception as e:
+                self.update_progress_ui(0, 1)
+                self.log(f"Resume upload exception: {e}")
+
+        threading.Thread(target=background_resume_upload, daemon=True).start()
+
     def download_file(self):
         if not self.sock or not self.connected:
             messagebox.showwarning("Not Connected", "Please connect first.")
@@ -563,58 +657,91 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             return
 
         save_path = filedialog.asksaveasfilename(initialfile=self.selected_file)
-        if save_path:
+        if not save_path:
+            return
 
-            def background_download():
-                try:
-                    self.send_json({
-                        "command": "DOWNLOAD",
-                        "filename": self.selected_file,
-                        "path": self.current_path,
-                    })
+        def background_download():
+            try:
+                # 1. Determine local file size to support resuming
+                local_bytes = 0
+                if os.path.exists(save_path):
+                    local_bytes = os.path.getsize(save_path)
 
-                    res = self.recv_json()
-                    if res and res.get("status") == "READY":
-                        filesize = res.get("filesize")
-                        file_ext = os.path.splitext(self.selected_file)[1].replace(".", "").upper() or "UNKNOWN"
-                        perf_start = time.perf_counter()
+                # 2. Send RESUME_DOWNLOAD command including filename, path, and offset
+                self.send_json({
+                    "command": "RESUME_DOWNLOAD",
+                    "filename": self.selected_file,
+                    "path": self.current_path,
+                    "offset": local_bytes
+                })
 
-                        self.send_json({"status": "START"})
+                res = self.recv_json()
+                if res and res.get("status") == "READY":
+                    total_filesize = res.get("filesize")
+                    file_ext = os.path.splitext(self.selected_file)[1].replace(".", "").upper() or "UNKNOWN"
+                    perf_start = time.perf_counter()
 
-                        received = 0
-                        with open(save_path, "wb") as f:
-                            while received < filesize:
+                    self.send_json({"status": "START"})
+
+                    if local_bytes >= total_filesize:
+                        self.log(f"File '{self.selected_file}' is already fully downloaded.")
+                        self.update_progress_ui(total_filesize, total_filesize)
+                    else:
+                        received = local_bytes
+                        self.log(
+                            f"Resuming download for '{self.selected_file}' from byte {local_bytes}/{total_filesize}...")
+
+                        # 3. Open file in append mode ("ab") to preserve downloaded bytes
+                        with open(save_path, "ab") as f:
+                            while received < total_filesize:
                                 chunk = self.sock.recv(
-                                    min(self.BUFFER_SIZE, filesize - received)
+                                    min(self.BUFFER_SIZE, total_filesize - received)
                                 )
                                 if not chunk:
                                     break
                                 f.write(chunk)
                                 received += len(chunk)
-                                # Update progress bar dynamically during download stream
-                                self.update_progress_ui(received, filesize)
+                                self.update_progress_ui(received, total_filesize)
 
-                        elapsed = time.perf_counter() - perf_start
-                        analytics.record_metric(
-                            source="CLIENT",
-                            client_id=self.client_label,
-                            operation="DOWNLOAD",
-                            file_type=file_ext,
-                            file_size_bytes=received,
-                            elapsed_sec=elapsed
-                        )
+                    # 4. Receive and verify SHA-256 integrity hash from server
+                    hash_res = self.recv_json()
+                    elapsed = time.perf_counter() - perf_start
 
-                        self.log(f"Downloaded '{self.selected_file}' successfully.")
+                    if hash_res and hash_res.get("status") == "HASH":
+                        server_sha256 = hash_res.get("sha256")
+
+                        sha256_hash = hashlib.sha256()
+                        with open(save_path, "rb") as f:
+                            for byte_block in iter(lambda: f.read(4096), b""):
+                                sha256_hash.update(byte_block)
+                        local_sha256 = sha256_hash.hexdigest()
+
+                        if local_sha256 == server_sha256:
+                            self.log(f"Integrity verified (SHA-256 match): {local_sha256[:12]}...")
+                            analytics.record_metric(
+                                source="CLIENT",
+                                client_id=self.client_label,
+                                operation="DOWNLOAD_RESUME",
+                                file_type=file_ext,
+                                file_size_bytes=(total_filesize - local_bytes),
+                                elapsed_sec=elapsed
+                            )
+                            self.log(f"Successfully downloaded/resumed '{self.selected_file}'.")
+                        else:
+                            self.log("WARNING: SHA-256 integrity check failed! File may be corrupted.")
+                            messagebox.showerror("Integrity Error", "Downloaded file hash does not match server hash.")
                     else:
-                        self.update_progress_ui(0, 1)
-                        self.log(
-                            f"Download error: {res.get('message') if res else 'Unknown'}"
-                        )
-                except Exception as e:
-                    self.update_progress_ui(0, 1)
-                    self.log(f"Download exception: {e}")
+                        self.log("Download completed, but server did not provide a verification hash.")
 
-            threading.Thread(target=background_download, daemon=True).start()
+                else:
+                    self.update_progress_ui(0, 1)
+                    self.log(f"Download error: {res.get('message') if res else 'Unknown'}")
+
+            except Exception as e:
+                self.update_progress_ui(0, 1)
+                self.log(f"Download exception (connection lost): {e}")
+
+        threading.Thread(target=background_download, daemon=True).start()
 
     def delete_file(self):
         if not self.sock or not self.connected:
