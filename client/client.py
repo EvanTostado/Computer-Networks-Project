@@ -178,12 +178,6 @@ class ModernNetworkedFileClientGUI(ctk.CTk):
             hover_color="#962d22",
             command=self.delete_file,
         ).pack(pady=5)
-        # ctk.CTkButton(
-        #     right_card,
-        #     text="Continue Download",
-        #     width=btn_width,
-        #     command=self.download_file,  # Resumed inside download_file automatically
-        # ).pack(pady=5)
 
         ctk.CTkLabel(
             right_card,
